@@ -10,10 +10,12 @@ import { logger } from './utils/logger';
 import mongoose from 'mongoose';
 import http from 'http';
 import { Server as SocketIOServer } from 'socket.io';
+import { clerkMiddleware } from '@clerk/express';
+import routes from './routes';
 
-// import routes from './routes';
 import { notFoundHandler } from './middlewares/notFoundHandler';
 import { errorHandler } from './middlewares/errorHandler';
+import { setupSocket } from './socket';
 
 // ---- Env ----
 const PORT = Number(process.env.PORT || 4000);
@@ -38,28 +40,52 @@ app.use(cors());
 
 app.use(compression());
 app.use(express.json({ limit: '1mb' }));
+app.use(clerkMiddleware());
 app.use(rateLimit({ windowMs: 60_000, max: 300 }));
 app.use(morgan(NODE_ENV === 'production' ? 'combined' : 'dev'));
-app.use(pinoHttp({ logger }));
+app.use(pinoHttp({
+  logger,
+  customLogLevel: (res, err) => {
+    if ((res?.statusCode && res.statusCode >= 500) || err) return 'error';
+    if (res?.statusCode && res.statusCode >= 400) return 'warn';
+    return 'info';
+  },
+  customSuccessMessage: (req, res) => {
+    const method = req.method || 'UNKNOWN_METHOD';
+    const url = req.url || 'UNKNOWN_URL';
+    const status = res.statusCode || 0;
+    return `${method} ${url} ${status}`;
+  },
+  customErrorMessage: (req, res, err) => {
+    const method = req.method || 'UNKNOWN_METHOD';
+    const url = req.url || 'UNKNOWN_URL';
+    const status = res.statusCode || 0;
+    const message = err.message;
+    const stack = err.stack?.split('\n')[1]?.trim();
+    return `${method} ${url} ${status} - ${message} (${stack})`;
+  },
+  serializers: {
+    req: (req) => ({
+      method: req.method,
+      url: req.url,
+    }),
+    res: (res) => ({
+      statusCode: res.statusCode,
+    }),
+  },
+})
+);
 
 // ---- Socket.IO ----
-io.on('connection', (socket) => {
-  logger.info({ id: socket.id }, '[socket] connected');
-
-  socket.on('message', (data) => {
-    logger.debug({ id: socket.id, data }, '[socket] message');
-    socket.emit('message', data);
-  });
-
-  socket.on('disconnect', (reason) => {
-    logger.info({ id: socket.id, reason }, '[socket] disconnected');
-  });
-});
+setupSocket(io);
+app.set('io', io);
 
 // ---- Routes ----
 app.get('/api/v1/health', (_req, res) => {
   res.json({ ok: true, env: NODE_ENV, mongo: mongoose.connection.readyState });
 });
+
+app.use('/api/v1', routes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
