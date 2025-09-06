@@ -94,8 +94,8 @@ const startServer = async () => {
   try {
     await mongoose.connect(MONGO_URI);
     logger.info('[server] Connected to MongoDB');
-    server.listen(PORT, () => {
-      logger.info({ port: PORT }, '[server] Listening');
+    server.listen(PORT, '0.0.0.0', () => {
+      logger.info({ port: PORT }, '[server] Listening on 0.0.0.0');
     });
   } catch (error) {
     logger.error({ err: error }, '[server] Startup error');
